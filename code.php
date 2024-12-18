@@ -318,7 +318,7 @@ $fg_color = imageColorAllocate(
 );
 
 // Ric Ewing: I modified this to behave better with long or narrow images and condensed the resize code to a single line
-$fontsize = max( min( $width / strlen( $text ) * 1.15, $height * 0.5 ), 5 );
+$fontsize = max( min( $width / mb_strlen( $text ) * 1.15, $height * 0.5 ), 5 );
 // Pass these variable to a function to calculate the position of the bounding box
 $textBox = imagettfbbox_t( $fontsize, $text_angle, $font, $text );
 // Calculate the width of the text box by subtracting the upper right "X" position with the lower left "X" position
