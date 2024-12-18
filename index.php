@@ -1,3 +1,6 @@
+<?php
+$fonts = array_diff(scandir(__DIR__.'/fonts/'), ['.', '..']);
+?>
 <!DOCTYPE HTML>
 <html>
 <head>
@@ -55,6 +58,15 @@ if ( top != self ) { top.location.href = 'https://dummyimage.com/'; }
   <label for="text">Text
 	<input type="text" name="text" id="text" value="" size="30">
   </label>
+  <span class="ampersand seperator">&</span>
+    <label for="font">font
+        <select name="font" id="font">
+            <option value="" selected></option>
+            <?php foreach($fonts as $font): ?>
+                <option value="<?=$font?>"><?=$font?></option>
+            <?php endforeach;?>
+        </select>
+    </label>
 </form>
 <h3 id="documentation">Documentation</h3>
 <h4 id="size">Size</h4>
@@ -470,6 +482,9 @@ jQuery(document).ready(function($) {
 						text = text.replace(/\s/ig, '+');
 						url += '&text=' + text;
 					break;
+                    case 5:
+                        url += '&font=' + val;
+                        break;
 					default:
 						url += val;
 				}
