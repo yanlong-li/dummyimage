@@ -58,6 +58,13 @@ if ( empty( $_GET['text'] ) || ! isset( $_GET['text'] ) ) {
 	}
 }
 
+if ( empty( $_GET['font'] ) || ! isset( $_GET['font'] ) ) {
+    preg_match( '/&font=(.+)/i', $_GET['x'], $matches );
+    if ( isset( $matches[1] ) ) {
+        $_GET['font'] = urldecode( $matches[1] );
+    }
+}
+
 // Ruquay K Calloway http://ruquay.com/sandbox/imagettf/ made a better function to find the coordinates of the text bounding box so I used it.
 function imagettfbbox_t( $size, $text_angle, $fontfile, $text ) {
 	// Compute size with a zero angle
