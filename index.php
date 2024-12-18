@@ -52,6 +52,7 @@ if ( top != self ) { top.location.href = 'https://dummyimage.com/'; }
 	  <option value=".png">png</option>
 	  <option value=".gif">gif</option>
 	  <option value=".jpg">jpg</option>
+	  <option value=".webp">webp</option>
 	</select>
   </label>
   <span class="ampersand seperator">&amp;</span>
