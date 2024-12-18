@@ -362,7 +362,10 @@ switch ( $file_format ) {
 		if ( ! function_exists( 'imagewebp' ) ) {
 			die( $file_format . ' is not supported!' );
 		}
-		imagewebp( $img );
+        // 转换为真彩色图像（避免调色板限制）
+        $trueColorImage = imagecreatetruecolor(imagesx($img), imagesy($img));
+        imagecopy($trueColorImage, $img, 0, 0, 0, 0, imagesx($img), imagesy($img));
+		imagewebp( $trueColorImage );
 		break;
 
 	case 'jpg':
