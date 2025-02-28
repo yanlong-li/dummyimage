@@ -40,6 +40,7 @@ if ( isset( $_SERVER['HTTP_IF_MODIFIED_SINCE'] ) ) {
  * This is intedned to fix this while maintaining backwards compatibility.
  */
 $url_parts = parse_url( $_SERVER['REQUEST_URI'] );
+$_GET['x'] = $_SERVER['REQUEST_URI'];
 if ( ! empty( $url_parts['query'] ) ) {
 	parse_str( $url_parts['query'], $query_arr );
 
@@ -317,8 +318,36 @@ $fg_color = imageColorAllocate(
 	$foreground->get_rgb( 'b' )
 );
 
+function calculateFontSize($text, $font, $width, $height, $angle = 0) {
+    $maxFontSize = $height * 0.5; // 高度限制
+    $minFontSize = 5; // 最小字体大小
+    $fontSize = $maxFontSize;
+
+    // 迭代找到适合的字体大小
+    while ($fontSize > $minFontSize) {
+        $textBox = imagettfbbox($fontSize, $angle, $font, $text);
+        $textWidth = abs($textBox[4] - $textBox[0]); // X 轴宽度
+        $textHeight = abs($textBox[5] - $textBox[1]); // Y 轴高度
+
+        // 如果宽度合适且高度不过界，停止调整
+        if ($textWidth <= $width && $textHeight <= $height) {
+            break;
+        }
+
+        $fontSize--; // 字体大小递减
+    }
+
+    return $fontSize;
+}
+
 // Ric Ewing: I modified this to behave better with long or narrow images and condensed the resize code to a single line
-$fontsize = max( min( $width / mb_strlen( $text ) * 1.15, $height * 0.5 ), 5 );
+
+$fontsize = calculateFontSize($text, $font, $width * 0.8, $height * 0.8, $text_angle);
+
+if(!empty($_GET['fontsize'])){
+    $fontsize = $_GET['fontsize'];
+}
+
 // Pass these variable to a function to calculate the position of the bounding box
 $textBox = imagettfbbox_t( $fontsize, $text_angle, $font, $text );
 // Calculate the width of the text box by subtracting the upper right "X" position with the lower left "X" position
@@ -333,6 +362,10 @@ $textY = ceil( ( $height - $textHeight ) / 2 + $textHeight );
 
 // Create the rectangle with the specified background color
 imageFilledRectangle( $img, 0, 0, $width, $height, $bg_color );
+
+// 按行绘制文字
+$lines = explode("\n", $text);
+
 // Create and positions the text
 imagettftext( $img, $fontsize, $text_angle, $textX, $textY, $fg_color, $font, $text );
 
