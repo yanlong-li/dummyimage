@@ -10,6 +10,11 @@
  *  bc       背景颜色（16进制颜色，不传表示透明背景）
  */
 
+
+header('Cache-Control: public, max-age=86400, must-revalidate');
+// 设置资源的过期时间
+header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT');
+
 // 获取传参（可以通过 URL 传入，如 ?text=Hello&font=/path/to/font.ttf&fontsize=10&size=300*300&type=png&fc=000000&bc=FFFFFF）
 $text = $_GET['text'] ?? 'Hello, World!';
 
@@ -26,9 +31,14 @@ $font = __DIR__ . '/fonts/' . $font;
 $fontsize_param = isset($_GET['fontsize']) ? intval($_GET['fontsize']) : 10;
 $size_str       = $_GET['size'] ?? '300*300';
 
-list($width, $height) = explode('*', $size_str);
-$width  = intval($width);
-$height = intval($height);
+
+if (strpos($size_str, '*')) {
+    list($width, $height) = explode('*', $size_str);
+    $width  = max(1, intval($width));
+    $height = max(1, intval($height));
+} elseif (ctype_digit($size_str)) {
+    $width = $height = $size_str;
+}
 
 $type = isset($_GET['type']) ? strtolower($_GET['type']) : 'png';
 $fc   = $_GET['fc'] ?? '000000';
@@ -167,11 +177,6 @@ foreach ($lines as $index => $line) {
     imagettftext($image, $fontsize, 0, $x, $startY, $textColor, $font, $line);
     $startY += $lineSpacing;
 }
-
-
-header('Cache-Control: public, max-age=86400, must-revalidate');
-// 设置资源的过期时间
-header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT');
 
 
 // 输出图片
