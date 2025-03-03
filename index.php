@@ -93,7 +93,7 @@ ABC
 
             <label for="font">字体文件路径：</label>
             <select id="font" name="font" required>
-                <option value=""></option>
+                <option value="">默认：HYDiShengYingXiongTiW.ttf</option>
                 <?php foreach ($fontOptions as $font): ?>
                     <option value="<?= htmlspecialchars($font, ENT_QUOTES, 'UTF-8') ?>">
                         <?= htmlspecialchars($font, ENT_QUOTES, 'UTF-8') ?>
@@ -109,7 +109,7 @@ ABC
 
             <label for="type">图片格式：</label>
             <select id="type" name="type" required>
-                <option value=""></option>
+                <option value="">默认：PNG</option>
                 <?php foreach (['jpg', 'png', 'svg', 'webp'] as $format): ?>
                     <option value="<?= $format ?>"><?= strtoupper($format) ?></option>
                 <?php endforeach; ?>
@@ -134,7 +134,8 @@ ABC
             <textarea id="code" rows="4"></textarea>
         </div>
         <div>
-            图片大小: <span id="fileSize"></span>
+            图片大小: <span id="fileSize"></span><br>
+            图片格式: <span id="fileType"></span>
         </div>
     </div>
 </div>
@@ -158,6 +159,7 @@ ABC
     const preview = document.getElementById('preview');
     const previewContainer = document.getElementById('image-preview');
     const fileSizeDisplay = document.getElementById('fileSize');
+    const fileTypeDisplay = document.getElementById('fileType');
 
 
     function getFilteredFormData(form) {
@@ -200,6 +202,7 @@ ABC
         }).then(blob => {
             preview.src = URL.createObjectURL(blob);
             fileSizeDisplay.innerHTML = formatSize(blob.size);
+            fileTypeDisplay.innerHTML = blob.type;
         }).finally(() => {
             padding = true;
         })
