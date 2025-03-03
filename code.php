@@ -1,426 +1,205 @@
 <?php
-/*
-Dynamic Dummy Image Generator - DummyImage.com
-Copyright (c) 2011 Russell Heimlich
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-*/
-
-if ( isset( $_SERVER['HTTP_IF_MODIFIED_SINCE'] ) ) {
-	// If the browser has a cached version of this image, send 304
-	header( 'Last-Modified: ' . $_SERVER['HTTP_IF_MODIFIED_SINCE'], true, 304 );
-	exit;
-}
-
 /**
- * Monkey patch $_GET parameters
- *
- * When I first wrote this and didn't know what I was doing I passed the entire URL path
- * of the request to the script as ?x=<stuff> via a URL rewrite. To make the text parameter
- * work you needed to construct the URL like "&text=whatever" which would populate $_GET['text'].
- *
- * If you construct the URL like "?text=whatever", the text parameter will be ignored.
- * This is intedned to fix this while maintaining backwards compatibility.
+ * 参数说明：
+ *  text     文本内容（支持多行，以换行符分隔）
+ *  font     字体文件路径（TTF格式）
+ *  fontsize 起始字号（脚本会自动增大字号直至文字恰好适应图片）
+ *  size     图片尺寸，格式如 300*300 （宽*高）
+ *  type     图片类型：jpg/png/svg/avif/webp
+ *  fc       文字颜色（16进制颜色，如 FF0000）
+ *  bc       背景颜色（16进制颜色，不传表示透明背景）
  */
-$url_parts = parse_url( $_SERVER['REQUEST_URI'] );
-$_GET['x'] = $_SERVER['REQUEST_URI'];
-if ( ! empty( $url_parts['query'] ) ) {
-	parse_str( $url_parts['query'], $query_arr );
 
-	// Make sure we don't overwrite $_GET['x'] populated by a URL rewrite at the server level
-	unset( $query_arr['x'] );
-	$_GET = array_merge( $query_arr, $_GET );
+// 获取传参（可以通过 URL 传入，如 ?text=Hello&font=/path/to/font.ttf&fontsize=10&size=300*300&type=png&fc=000000&bc=FFFFFF）
+$text = $_GET['text'] ?? 'Hello, World!';
+
+$font = $_GET['font'] ?? 'HYDiShengYingXiongTiW.ttf';
+
+$fonts = array_map('basename', glob(__DIR__ . '/fonts/*.ttf'));
+if (!in_array($font, $fonts)) {
+    $font = 'HYDiShengYingXiongTiW.ttf';
 }
+$font = __DIR__ . '/fonts/' . $font;
 
-/**
- * Extract the text parameter from the URL
- */
-if ( empty( $_GET['text'] ) || ! isset( $_GET['text'] ) ) {
-	preg_match( '/&text=(.+)/i', $_GET['x'], $matches );
-	if ( isset( $matches[1] ) ) {
-		$_GET['text'] = urldecode( $matches[1] );
-	}
-}
 
-if ( empty( $_GET['font'] ) || ! isset( $_GET['font'] ) ) {
-    preg_match( '/&font=(.+)/i', $_GET['x'], $matches );
-    if ( isset( $matches[1] ) ) {
-        $_GET['font'] = urldecode( $matches[1] );
+// 参数获取
+$fontsize_param = isset($_GET['fontsize']) ? intval($_GET['fontsize']) : 10;
+$size_str       = $_GET['size'] ?? '300*300';
+
+list($width, $height) = explode('*', $size_str);
+$width  = intval($width);
+$height = intval($height);
+
+$type = isset($_GET['type']) ? strtolower($_GET['type']) : 'png';
+$fc   = $_GET['fc'] ?? '000000';
+$bc   = $_GET['bc'] ?? null;
+// 新增 padding 参数，支持传入 "10" 或 "10px"
+$padding = $_GET['padding'] ?? min($width, $height) * 0.1;
+$padding = intval(preg_replace('/\D/', '', $padding)); // 去除非数字字符
+
+
+// 计算可用区域尺寸（排除边距）
+$availWidth  = $width - 2 * $padding;
+$availHeight = $height - 2 * $padding;
+
+// 辅助函数：16进制颜色转RGB
+function hex2rgb($hex)
+{
+    $hex = ltrim($hex, '#');
+    if (strlen($hex) == 3) {
+        $r = hexdec(str_repeat(substr($hex, 0, 1), 2));
+        $g = hexdec(str_repeat(substr($hex, 1, 1), 2));
+        $b = hexdec(str_repeat(substr($hex, 2, 1), 2));
+    } else {
+        $r = hexdec(substr($hex, 0, 2));
+        $g = hexdec(substr($hex, 2, 2));
+        $b = hexdec(substr($hex, 4, 2));
     }
+    return array($r, $g, $b);
 }
 
-// Ruquay K Calloway http://ruquay.com/sandbox/imagettf/ made a better function to find the coordinates of the text bounding box so I used it.
-function imagettfbbox_t( $size, $text_angle, $fontfile, $text ) {
-	// Compute size with a zero angle
-	$coords = imagettfbbox( $size, 0, $fontfile, $text );
-
-	// Convert angle to radians
-	$a = deg2rad( $text_angle );
-
-	// Compute some usefull values
-	$ca  = cos( $a );
-	$sa  = sin( $a );
-	$ret = array();
-
-	// Perform transformations
-	for ( $i = 0; $i < 7; $i += 2 ) {
-		$ret[ $i ]     = round( $coords[ $i ] * $ca + $coords[ $i + 1 ] * $sa );
-		$ret[ $i + 1 ] = round( $coords[ $i + 1 ] * $ca - $coords[ $i ] * $sa );
-	}
-	return $ret;
-}
-
-// Get the query string from the URL. x would = 600x400 if the url was https://dummyimage.com/600x400
-$x = strtolower( $_GET['x'] );
-// Strip / if it's the first character
-$x        = ltrim( $x, '/' );
-$x_pieces = explode( '/', $x );
-
-/**
- * Find the dimensions
- */
-// Translate image size keywords to dimensions
-$keywords = array(
-	// IAB Standard ad sizes
-	'mediumrectangle'   => '300x250',
-	'medrect'           => '300x250',
-	'squarepopup'       => '250x250',
-	'sqrpop'            => '250x250',
-	'verticalrectangle' => '240x400',
-	'vertrec'           => '240x400',
-	'largerectangle'    => '336x280',
-	'lrgrec'            => '336x280',
-	'rectangle'         => '180x150',
-	'rec'               => '180x150',
-	'popunder'          => '720x300',
-	'pop'               => '720x300',
-	'fullbanner'        => '468x60',
-	'fullban'           => '468x60',
-	'halfbanner'        => '234x60',
-	'halfban'           => '234x60',
-	'microbar'          => '88x31',
-	'mibar'             => '88x31',
-	'button1'           => '120x90',
-	'but1'              => '120x90',
-	'button2'           => '120x60',
-	'but2'              => '120x60',
-	'verticalbanner'    => '120x240',
-	'vertban'           => '120x240',
-	'squarebutton'      => '125x125',
-	'sqrbut'            => '125x125',
-	'leaderboard'       => '728x90',
-	'leadbrd'           => '728x90',
-	'wideskyscraper'    => '160x600',
-	'wiskyscrpr'        => '160x600',
-	'skyscraper'        => '120x600',
-	'skyscrpr'          => '120x600',
-	'halfpage'          => '300x600',
-	'hpge'              => '300x600',
-
-	// Computer display standards via https://en.wikipedia.org/wiki/Computer_display_standard
-	'cga'   => '320x200',
-	'qvga'  => '320x240',
-	'vga'   => '640x480',
-	'wvga'  => '800x480',
-	'svga'  => '800x600',
-	'wsvga' => '1024x600',
-	'xga'   => '1024x768',
-	'wxga'  => '1280x800',
-	'sxga'  => '1280x1024',
-	'wsxga' => '1440x900',
-	'uxga'  => '1600x1200',
-	'wuxga' => '1920x1200',
-	'qxga'  => '2048x1536',
-	'wqxga' => '2560x1600',
-	'qsxga' => '2560x2048',
-	'wqsxga' => '3200x2048',
-	'quxga'  => '3200x2400',
-	'wquxga' => '3840x2400',
-
-	// Video Standards
-	'ntsc'   => '720x480',
-	'pal'    => '768x576',
-	'hd720'  => '1280x720',
-	'720p'   => '1280x720',
-	'hd1080' => '1920x1080',
-	'1080p'  => '1920x1080',
-	'2k'     => '2560x1440',
-	'4k'     => '3840x2160',
-);
-$image_size_keyword = '';
-if ( ! empty( $keywords[ $x_pieces[0] ] ) ) {
-	$image_size_keyword = $x_pieces[0];
-	$x_pieces[0] = $keywords[ $x_pieces[0] ];
-}
-
-// Dimensions are always the first paramter in the URL
-$dimensions = explode( 'x', $x_pieces[0] );
-
-// Filter out any characters that are not numbers, colons or decimal points
-$width  = preg_replace( '/[^\d:\.]/i', '', $dimensions[0] );
-$height = $width;
-if ( ! empty( $dimensions[1] ) ) {
-	$height = preg_replace( '/[^\d:\.]/i', '', $dimensions[1] );
-}
-
-// Sanity check that there is only 1 colon in the dimensions to perform a ratio calculation
-if ( substr_count( $x_pieces[0], ':' ) > 1 ) {
-	die( $x_pieces[0] . ' has too many colons in the dimension paramter! There should be 1 at most.' );
-}
-
-// Can't calculate a ratio without a height
-if ( strstr( $x_pieces[0], ':' ) && ! strstr( $x_pieces[0], 'x' ) ) {
-	die( 'To calculate a ratio a height is needed.' );
-}
-
-// If one of the dimensions has a colon in it, we can calculate the aspect ratio.
-// Chances are the height will contain a ratio, so we'll check that first.
-if ( preg_match( '/:/', $height ) ) {
-
-	$ratio = explode( ':', $height );
-
-	// If we only have one ratio value set the other value to the same value of the first making it a ratio of 1
-	if ( empty( $ratio[1] ) ) {
-		$ratio[1] = $ratio[0];
-	}
-
-	if ( empty( $ratio[0] ) ) {
-		$ratio[0] = $ratio[1];
-	}
-
-	// Ensure we're dealing with numbers
-	$width    = abs( floatval( $width ) );
-	$ratio[0] = abs( floatval( $ratio[0] ) );
-	$ratio[1] = abs( floatval( $ratio[1] ) );
-
-	$height = ( $width * $ratio[1] ) / $ratio[0];
-
-} elseif ( preg_match( '/:/', $width ) ) {
-
-	$ratio = explode( ':', $width );
-	// If we only have one ratio value, set the other value to the same value of the first making it a ratio of 1
-	if ( empty( $ratio[1] ) ) {
-		$ratio[1] = $ratio[0];
-	}
-
-	if ( empty( $ratio[0] ) ) {
-		$ratio[0] = $ratio[1];
-	}
-
-	// Ensure we're dealing with numbers
-	$height   = abs( floatval( $height ) );
-	$ratio[0] = abs( floatval( $ratio[0] ) );
-	$ratio[1] = abs( floatval( $ratio[1] ) );
-
-	$width = ( $height * $ratio[0] ) / $ratio[1];
-}
-
-$width  = abs( floatval( $width ) );
-$height = abs( floatval( $height ) );
-
-// If the dimensions are too small then kill the script
-if ( $width < 1 || $height < 1 ) {
-	die( 'Too small of an image!' );
-}
-
-// Limit the size of the image to no more than an area of 33,177,600 (8K resolution)
-$area = $width * $height;
-if ( $area > 33177600 || $width > 9999 || $height > 9999 ) {
-	die( 'Too big of an image!' );
-}
-
-// Let's round the dimensions to 3 decimal places for aesthetics
-$width  = round( $width, 3 );
-$height = round( $height, 3 );
-
-// To easily manipulate colors between different formats
-require 'color.class.php';
-
-// Find the background color which is always after the 2nd slash in the url
-$bg_color = 'ccc';
-if ( ! empty( $x_pieces[1] ) ) {
-	$bg_color_parts = explode( '.', $x_pieces[1] );
-	if ( ! empty( $bg_color_parts[0] ) ) {
-		$bg_color = $bg_color_parts[0];
-	}
-}
-$background = new color();
-$background->set_hex( $bg_color );
-
-// Find the foreground color which is always after the 3rd slash in the url
-$fg_color = '000';
-if ( isset( $x_pieces[2] ) ) {
-	$fg_color_parts = explode( '.', $x_pieces[2] );
-	if ( isset( $fg_color_parts[0] ) && ! empty( $fg_color_parts[0] ) ) {
-		$fg_color = $fg_color_parts[0];
-	}
-}
-$foreground = new color();
-$foreground->set_hex( $fg_color );
-
-// This is the default text string that will go right in the middle of the rectangle
-// &#215; is the multiplication sign, it is not an 'x'
-$text  = $width . ' &#215; ' . $height;
-$lines = 1;
-
-if ( ! empty( $_GET['text'] ) ) {
-	$lines = substr_count( $_GET['text'], '|' );
-	$text  = preg_replace( '/\|/i', "\n", $_GET['text'] );
-}
-
-// Determine the file format. This can be anywhere in the URL.
-$file_format = 'png';
-preg_match_all( '/\.(webp|gif|jpg|jpeg)/', $x, $result );
-if ( ! empty( $result[1][0] ) ) {
-	$file_format = $result[1][0];
-}
-
-// I don't use this but if you wanted to angle your text you would change it here.
-$text_angle = 0;
-
- // If you want to use a different font simply upload the true type font (.ttf) file to the same directory as this PHP file and set the $font variable to the font file name. I'm using the M+ font which is free for distribution -> http://www.fontsquirrel.com/fonts/M-1c
-$font = 'fonts/mplus-2c-light.ttf';
-
-$fonts = array_diff(scandir(__DIR__.'/fonts/'), ['.', '..',]);
-if(!empty($_GET['font']) && in_array ($_GET['font'], $fonts)) {
-    $font = 'fonts/'.$_GET['font'];
-}
-
-// Create an image
-$img      = imageCreate( $width, $height );
-$bg_color = imageColorAllocate(
-	$img,
-	$background->get_rgb( 'r' ),
-	$background->get_rgb( 'g' ),
-	$background->get_rgb( 'b' )
-);
-$fg_color = imageColorAllocate(
-	$img,
-	$foreground->get_rgb( 'r' ),
-	$foreground->get_rgb( 'g' ),
-	$foreground->get_rgb( 'b' )
-);
-
-function calculateFontSize($text, $font, $width, $height, $angle = 0) {
-    $maxFontSize = $height * 0.5; // 高度限制
-    $minFontSize = 5; // 最小字体大小
-    $fontSize = $maxFontSize;
-
-    // 迭代找到适合的字体大小
-    while ($fontSize > $minFontSize) {
-        $textBox = imagettfbbox($fontSize, $angle, $font, $text);
-        $textWidth = abs($textBox[4] - $textBox[0]); // X 轴宽度
-        $textHeight = abs($textBox[5] - $textBox[1]); // Y 轴高度
-
-        // 如果宽度合适且高度不过界，停止调整
-        if ($textWidth <= $width && $textHeight <= $height) {
-            break;
+// 如果类型为 SVG，则采用 SVG 方式生成
+if ($type == 'svg') {
+    header("Content-Type: image/svg+xml");
+    $lines = explode("\n", $text);
+    // 这里直接使用传入的 fontsize 参数作为初始文字大小
+    $maxFontSize = $fontsize_param;
+    $lineHeight  = $maxFontSize;
+    // 总文字块高度
+    $totalHeight = count($lines) * $lineHeight;
+    // 起始 y 坐标在可用区域内垂直居中
+    $startY = $padding + ($availHeight - $totalHeight) / 2 + $maxFontSize;
+    $bgFill = $bc ? '#' . $bc : 'none';
+    $svg    = <<<SVG
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="{$width}" height="{$height}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="100%" height="100%" fill="{$bgFill}" />
+  <text x="50%" y="{$startY}" fill="#{$fc}" font-family="{$font}" font-size="{$maxFontSize}" text-anchor="middle">
+SVG;
+    foreach ($lines as $i => $line) {
+        if ($i == 0) {
+            $svg .= htmlspecialchars($line);
+        } else {
+            $dy  = $maxFontSize;
+            $svg .= "<tspan x=\"50%\" dy=\"{$dy}\">" . htmlspecialchars($line) . "</tspan>";
         }
-
-        $fontSize--; // 字体大小递减
     }
-
-    return $fontSize;
+    $svg .= "</text></svg>";
+    echo $svg;
+    ob_end_flush();
+    exit;
 }
 
-// Ric Ewing: I modified this to behave better with long or narrow images and condensed the resize code to a single line
+// 基于 GD 库生成位图
+$image = imagecreatetruecolor($width, $height);
 
-$fontsize = calculateFontSize($text, $font, $width * 0.8, $height * 0.8, $text_angle);
-
-if(!empty($_GET['fontsize'])){
-    $fontsize = $_GET['fontsize'];
+// 判断当前图片格式是否支持透明（png、webp、avif 支持）
+$supports_transparency = in_array($type, array('png', 'webp', 'avif'));
+if (!$bc && $supports_transparency) {
+    imagesavealpha($image, true);
+    $transparent = imagecolorallocatealpha($image, 0, 0, 0, 127);
+    imagefill($image, 0, 0, $transparent);
+} else {
+    if ($bc) {
+        list($br, $bg, $bb) = hex2rgb($bc);
+    } else {
+        $br = $bg = $bb = 255; // 默认白色背景
+    }
+    $bgColor = imagecolorallocate($image, $br, $bg, $bb);
+    imagefill($image, 0, 0, $bgColor);
 }
 
-// Pass these variable to a function to calculate the position of the bounding box
-$textBox = imagettfbbox_t( $fontsize, $text_angle, $font, $text );
-// Calculate the width of the text box by subtracting the upper right "X" position with the lower left "X" position
-$textWidth = ceil( ( $textBox[4] - $textBox[1] ) * 1.07 );
-// Calculate the height of the text box by adding the absolute value of the upper left "Y" position with the lower left "Y" position
-$textHeight = ceil( ( abs( $textBox[7] ) + abs( $textBox[1] ) ) * 1 );
+list($tr, $tg, $tb) = hex2rgb($fc);
+$textColor = imagecolorallocate($image, $tr, $tg, $tb);
+$lines     = explode("\n", $text);
 
-// Determine where to set the X position of the text box so it is centered
-$textX = ceil( ( $width - $textWidth ) / 2 );
-// Determine where to set the Y position of the text box so it is centered
-$textY = ceil( ( $height - $textHeight ) / 2 + $textHeight );
-
-// Create the rectangle with the specified background color
-imageFilledRectangle( $img, 0, 0, $width, $height, $bg_color );
-
-// 按行绘制文字
-$lines = explode("\n", $text);
-
-// Create and positions the text
-imagettftext( $img, $fontsize, $text_angle, $textX, $textY, $fg_color, $font, $text );
-
-
-function process_output_buffer( $buffer = '' ) {
-	$buffer = trim( $buffer );
-	if ( strlen( $buffer ) == 0 ) {
-		return '';
-	}
-	return $buffer;
+/**
+ * 检查在给定字号下，多行文字是否适合可用区域
+ * 要求：每行宽度不超过可用宽度，总高度不超过可用高度
+ */
+function textFits($fontsize, $lines, $font, $availWidth, $availHeight)
+{
+    $totalHeight = 0;
+    foreach ($lines as $line) {
+        $bbox       = imagettfbbox($fontsize, 0, $font, $line);
+        $lineWidth  = abs($bbox[2] - $bbox[0]);
+        $lineHeight = abs($bbox[7] - $bbox[1]);
+        if ($lineWidth > $availWidth) {
+            return false;
+        }
+        $totalHeight += $lineHeight;
+    }
+    // 这里使用 (int) 转换，避免四舍五入带来的过大值
+    $lineSpacing = (int)($fontsize * 0.2);
+    $totalHeight += $lineSpacing * (count($lines) - 1);
+    return $totalHeight <= $availHeight;
 }
-// Start output buffering so we can determine the Content-Length of the file
-ob_start( 'process_output_buffer' );
 
-// Create the final image based on the provided file format.
-switch ( $file_format ) {
-
-	case 'gif':
-		imagegif( $img );
-		break;
-
-	case 'png':
-		imagepng( $img );
-		break;
-
-	case 'webp':
-		if ( ! function_exists( 'imagewebp' ) ) {
-			die( $file_format . ' is not supported!' );
-		}
-        // 转换为真彩色图像（避免调色板限制）
-        $trueColorImage = imagecreatetruecolor(imagesx($img), imagesy($img));
-        imagecopy($trueColorImage, $img, 0, 0, 0, 0, imagesx($img), imagesy($img));
-		imagewebp( $trueColorImage );
-		break;
-
-	case 'jpg':
-	case 'jpeg':
-		imagejpeg( $img );
-		break;
-
-	default:
-		die( $file_format . ' is not supported!' );
+// 从提供的起始字号开始，逐步增大字号，直至超出可用区域尺寸
+$fontsize = $fontsize_param > 0 ? $fontsize_param : 10;
+while (textFits($fontsize + 1, $lines, $font, $availWidth, $availHeight)) {
+    $fontsize++;
 }
-$output = ob_get_contents();
 
-ob_end_clean();
+// 计算每行文字高度及总高度（包括行间距）
+$lineHeights     = [];
+$totalTextHeight = 0;
+foreach ($lines as $line) {
+    $bbox            = imagettfbbox($fontsize, 0, $font, $line);
+    $lineHeight      = abs($bbox[7] - $bbox[1]);
+    $lineHeights[]   = $lineHeight;
+    $totalTextHeight += $lineHeight;
+}
+$lineSpacing     = (int)($fontsize * 0.2);
+$totalTextHeight += $lineSpacing * (count($lines) - 1);
 
-// Caching Headers
-$offset = 60 * 60 * 24 * 90; // 90 Days
-header( 'Cache-Control: public, max-age=' . $offset );
-// Set a far future expire date. This keeps the image locally cached by the user for less hits to the server
-header( 'Expires: ' . gmdate( DATE_RFC1123, time() + $offset ) );
-header( 'Last-Modified: ' . gmdate( 'D, d M Y H:i:s', time() ) . ' GMT' );
-// Set the header so the browser can interpret it as an image and not a bunch of weird text
-header( 'Content-type: image/' . $file_format );
-header( 'Content-Length: ' . strlen( $output ) );
+// 计算整体文字块在可用区域内垂直居中的起始 y 坐标
+$startY = (int)($padding + ($availHeight - $totalTextHeight) / 2);
 
-echo $output;
+// 分行绘制文字，每行水平居中
+foreach ($lines as $index => $line) {
+    $bbox      = imagettfbbox($fontsize, 0, $font, $line);
+    $lineWidth = abs($bbox[2] - $bbox[0]);
+    // 每行起始 x 坐标：在可用区域内水平居中
+    $x = (int)($padding + ($availWidth - $lineWidth) / 2);
+    // 由于 imagettftext 以基线为准，因此先移动至本行高度
+    $startY += $lineHeights[$index];
+    imagettftext($image, $fontsize, 0, $x, $startY, $textColor, $font, $line);
+    $startY += $lineSpacing;
+}
+
+
+header('Cache-Control: public, max-age=86400, must-revalidate');
+// 设置资源的过期时间
+header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT');
+
+
+// 输出图片
+switch ($type) {
+    case 'jpg':
+    case 'jpeg':
+        header("Content-Type: image/jpeg");
+        imagejpeg($image);
+        break;
+    case 'webp':
+        header("Content-Type: image/webp");
+        imagewebp($image);
+        break;
+    case 'avif':
+        if (function_exists('imageavif')) {
+            header("Content-Type: image/avif");
+            imageavif($image);
+        } else {
+            header("Content-Type: image/png");
+            imagepng($image);
+        }
+        break;
+    case 'png':
+    default:
+        header("Content-Type: image/png");
+        imagepng($image);
+        break;
+}
+
+imagedestroy($image);
+ob_end_flush();
